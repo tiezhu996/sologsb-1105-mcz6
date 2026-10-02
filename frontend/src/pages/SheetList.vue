@@ -1,19 +1,22 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useSheetStore, type NewSheet } from '../stores/sheetStore'
+import { useRetirementStore } from '../stores/retirementStore'
 import type { Sheet, SheetScale, SheetStatus } from '../types/sheet'
-import { SHEET_SCALES, SHEET_STATUSES } from '../types/sheet'
+import { ACTIVE_SHEET_STATUSES, RETIRED_STATUS, SHEET_SCALES } from '../types/sheet'
 import { useSheetNeighbors } from '../hooks/useSheetNeighbors'
 import { scaleToText } from '../utils/scale'
 import ScaleTag from '../components/common/ScaleTag.vue'
 import VacantHint from '../components/common/VacantHint.vue'
 
 const sheetStore = useSheetStore()
+const retirementStore = useRetirementStore()
 const { getNeighborStatus } = useSheetNeighbors('')
 
 const yearFilter = ref('全部')
 const scaleFilter = ref<SheetScale | '全部'>('全部')
 const statusFilter = ref<SheetStatus | '全部'>('全部')
+const includeRetired = ref(false)
 const showCreateForm = ref(false)
 const formError = ref('')
 
@@ -37,12 +40,18 @@ const years = computed(() => [...new Set(sheetStore.sheets.map((sheet) => sheet.
 
 const filteredSheets = computed(() =>
   sheetStore.sheets.filter((sheet) => {
+    if (sheet.status === RETIRED_STATUS && !includeRetired.value) {
+      return false
+    }
     const matchesYear = yearFilter.value === '全部' || String(sheet.year) === yearFilter.value
     const matchesScale = scaleFilter.value === '全部' || sheet.scale === scaleFilter.value
     const matchesStatus = statusFilter.value === '全部' || sheet.status === statusFilter.value
     return matchesYear && matchesScale && matchesStatus
   }),
 )
+
+const retiredCount = computed(() => sheetStore.sheets.filter((sheet) => sheet.status === RETIRED_STATUS).length)
+const activeCount = computed(() => sheetStore.sheets.length - retiredCount.value)
 
 function neighborSummary(sheet: Sheet): string {
   const status = getNeighborStatus(sheet.id)
@@ -67,6 +76,15 @@ function resetForm(): void {
   formError.value = ''
 }
 
+function syncRetiredVisibility(value: SheetStatus | '全部'): void {
+  statusFilter.value = value
+  if (value === RETIRED_STATUS) {
+    includeRetired.value = true
+  } else if (value !== '全部') {
+    includeRetired.value = false
+  }
+}
+
 async function submitSheet(): Promise<void> {
   if (!form.code.trim() || !form.title.trim() || !form.year || !form.projection.trim()) {
     formError.value = '请填写图幅号、题名、年代与投影方式。'
@@ -84,7 +102,7 @@ async function submitSheet(): Promise<void> {
 }
 
 onMounted(() => {
-  void sheetStore.init()
+  void Promise.all([sheetStore.init(), retirementStore.init()])
 })
 </script>
 
@@ -103,16 +121,16 @@ onMounted(() => {
 
     <div class="metrics-strip">
       <div class="metric">
-        <span>馆藏图幅</span>
-        <strong>{{ sheetStore.sheets.length }}</strong><small>幅</small>
+        <span>在编图幅</span>
+        <strong>{{ activeCount }}</strong><small>幅</small>
       </div>
       <div class="metric">
         <span>扫描条目</span>
         <strong>{{ sheetStore.allScans.length }}</strong><small>件</small>
       </div>
       <div class="metric">
-        <span>已编图幅</span>
-        <strong>{{ sheetStore.sheets.filter((sheet) => sheet.status === '已编').length }}</strong><small>幅</small>
+        <span>已撤编图幅</span>
+        <strong>{{ retiredCount }}</strong><small>幅</small>
       </div>
     </div>
 
@@ -141,7 +159,7 @@ onMounted(() => {
         </el-form-item>
         <el-form-item label="整理状态" required>
           <select v-model="form.status" class="native-field" data-testid="field-status">
-            <option v-for="status in SHEET_STATUSES" :key="status" :value="status">{{ status }}</option>
+            <option v-for="status in ACTIVE_SHEET_STATUSES" :key="status" :value="status">{{ status }}</option>
           </select>
         </el-form-item>
         <el-form-item label="图幅尺寸">
@@ -173,21 +191,43 @@ onMounted(() => {
         <el-option label="全部比例尺" value="全部" />
         <el-option v-for="scale in SHEET_SCALES" :key="scale" :label="scale" :value="scale" />
       </el-select>
-      <el-select v-model="statusFilter" style="width: 130px" aria-label="按整理状态筛选">
+      <el-select
+        :model-value="statusFilter"
+        style="width: 130px"
+        aria-label="按整理状态筛选"
+        @update:model-value="syncRetiredVisibility"
+      >
         <el-option label="全部状态" value="全部" />
-        <el-option v-for="status in SHEET_STATUSES" :key="status" :label="status" :value="status" />
+        <el-option
+          v-for="status in [...ACTIVE_SHEET_STATUSES, RETIRED_STATUS]"
+          :key="status"
+          :label="status"
+          :value="status"
+        />
       </el-select>
+      <el-checkbox v-model="includeRetired" data-testid="include-retired">
+        显示已撤编图幅
+      </el-checkbox>
       <span class="filter-count">当前记录数：<strong data-testid="count-sheet">{{ filteredSheets.length }}</strong></span>
     </div>
 
     <div v-if="filteredSheets.length" class="card-grid">
-      <article v-for="sheet in filteredSheets" :key="sheet.id" class="sheet-card" data-testid="row-sheet">
+      <article
+        v-for="sheet in filteredSheets"
+        :key="sheet.id"
+        class="sheet-card"
+        :class="{ 'sheet-card--retired': sheet.status === RETIRED_STATUS }"
+        data-testid="row-sheet"
+      >
         <div class="sheet-card__top">
           <div>
             <div class="sheet-card__code">{{ sheet.code }}</div>
             <div class="sheet-card__series">{{ sheet.series }}</div>
           </div>
-          <el-tag :type="sheet.status === '已编' ? 'success' : sheet.status === '待核' ? 'warning' : 'info'" effect="dark">
+          <el-tag
+            :type="sheet.status === '已编' ? 'success' : sheet.status === '待核' ? 'warning' : sheet.status === RETIRED_STATUS ? 'danger' : 'info'"
+            effect="dark"
+          >
             {{ sheet.status }}
           </el-tag>
         </div>
@@ -209,7 +249,11 @@ onMounted(() => {
         <div class="status-row">
           <span class="muted">{{ sheet.projection }}</span>
           <div>
-            <router-link :to="`/sheets/${sheet.id}`"><el-button link type="primary">查看图幅</el-button></router-link>
+            <router-link :to="`/sheets/${sheet.id}`">
+              <el-button link :type="sheet.status === RETIRED_STATUS ? 'info' : 'primary'">
+                {{ sheet.status === RETIRED_STATUS ? '查看原资料' : '查看图幅' }}
+              </el-button>
+            </router-link>
             <router-link :to="`/sheets/${sheet.id}/neighbors`"><el-button link>邻接预览</el-button></router-link>
           </div>
         </div>
@@ -225,3 +269,17 @@ onMounted(() => {
     />
   </section>
 </template>
+
+<style scoped>
+.sheet-card--retired {
+  opacity: 0.72;
+  background:
+    linear-gradient(135deg, rgba(120, 100, 86, 0.1), transparent 46%),
+    #f1ece3;
+}
+
+.sheet-card--retired h2 {
+  text-decoration: line-through;
+  text-decoration-color: rgba(163, 63, 50, 0.55);
+}
+</style>

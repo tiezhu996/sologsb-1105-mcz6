@@ -1,6 +1,7 @@
 import Dexie, { type Table } from 'dexie'
 import type { NameHistory } from '../types/history'
 import type { PlacePair } from '../types/placePair'
+import type { RetirementRecord } from '../types/retirement'
 import type { ScanItem } from '../types/scan'
 import type { Sheet } from '../types/sheet'
 
@@ -381,6 +382,7 @@ class GboldmapDatabase extends Dexie {
   scans!: Table<ScanItem, string>
   placePairs!: Table<PlacePair, string>
   histories!: Table<NameHistory, string>
+  retirements!: Table<RetirementRecord, string>
 
   constructor() {
     super('gboldmap-db')
@@ -407,6 +409,15 @@ class GboldmapDatabase extends Dexie {
             sheet.schemaRev = 2
           })
       })
+
+    // version(3)：新增撤编登记表，保存撤编状态写入时的资料快照与邻接图旧值
+    this.version(3).stores({
+      sheets: 'id, code, year, scale, status, series',
+      scans: 'id, sheetId, importedAt, quality',
+      placePairs: 'id, sheetId, oldName, newName, placeType, certainty',
+      histories: 'id, placePairId, period, changeType',
+      retirements: 'id, sheetId, state, createdAt',
+    })
 
     this.on('populate', async () => {
       await this.sheets.bulkAdd(sheets)

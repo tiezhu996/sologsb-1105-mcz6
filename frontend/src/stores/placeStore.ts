@@ -1,6 +1,7 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import type { Certainty, PlacePair, PlaceType } from '../types/placePair'
+import { announceEdit } from '../utils/broadcast'
 import { createId, db, plain } from '../utils/db'
 
 export type NewPlacePair = Omit<PlacePair, 'id'>
@@ -43,6 +44,7 @@ export const usePlaceStore = defineStore('place', () => {
     await db.placePairs.add(plain(pair))
     pairs.value = [...pairs.value, pair]
     currentPair.value = pair
+    announceEdit('placePair', [pair.sheetId])
     return pair
   }
 

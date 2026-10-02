@@ -96,6 +96,7 @@ onMounted(() => {
         <span class="neighbor-slot__direction">当前图幅 · CENTER</span>
         <h3>{{ source.code }}</h3>
         <p>{{ source.title }}</p>
+        <el-tag v-if="source.status === '已撤编'" type="danger" size="small" effect="dark">已撤编 · 原资料只读</el-tag>
         <ScaleTag :year="source.year" :scale="source.scale" />
         <div v-if="sourcePrimaryScan" class="mt-20">
           <ScanCard :scan="sourcePrimaryScan" />

@@ -2,7 +2,9 @@ import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import type { ScanItem } from '../types/scan'
 import type { Sheet } from '../types/sheet'
+import { announceEdit } from '../utils/broadcast'
 import { createId, db, plain } from '../utils/db'
+import { ensureCheckpointRecovery } from '../utils/recoveryGate'
 import { sortByYear } from '../utils/scale'
 
 export type NewSheet = Omit<Sheet, 'id' | 'neighborCodes'> & {
@@ -30,7 +32,8 @@ export const useSheetStore = defineStore('sheet', () => {
     }
     if (!initialization) {
       loading.value = true
-      initialization = Promise.all([db.sheets.toArray(), db.scans.toArray()])
+      initialization = ensureCheckpointRecovery()
+        .then(() => Promise.all([db.sheets.toArray(), db.scans.toArray()]))
         .then(([sheetRows, scanRows]) => {
           sheets.value = sortByYear(sheetRows).reverse()
           allScans.value = scanRows
@@ -53,7 +56,21 @@ export const useSheetStore = defineStore('sheet', () => {
     await db.sheets.add(plain(sheet))
     sheets.value = sortByYear([...sheets.value, sheet]).reverse()
     currentSheet.value = sheet
+    announceEdit('sheet', [sheet.id])
     return sheet
+  }
+
+  /** 撤编、撤销撤编或检查点恢复后，从数据库重建内存图幅与扫描件缓存 */
+  async function reload(): Promise<void> {
+    const [sheetRows, scanRows] = await Promise.all([db.sheets.toArray(), db.scans.toArray()])
+    sheets.value = sortByYear(sheetRows).reverse()
+    allScans.value = scanRows
+    initialized.value = true
+    initialization = Promise.resolve()
+    if (currentSheet.value) {
+      currentSheet.value =
+        sheets.value.find((sheet) => sheet.id === currentSheet.value?.id) ?? null
+    }
   }
 
   async function loadSheet(id: string): Promise<void> {
@@ -72,6 +89,7 @@ export const useSheetStore = defineStore('sheet', () => {
     }
     await db.scans.add(plain(scan))
     allScans.value = [...allScans.value, scan]
+    announceEdit('scan', [scan.sheetId])
     return scan
   }
 
@@ -88,6 +106,7 @@ export const useSheetStore = defineStore('sheet', () => {
       }
       return { ...scan, isPrimary: scan.id === scanId }
     })
+    announceEdit('scan', [target.sheetId])
   }
 
   function getSheetById(id: string): Sheet | undefined {
@@ -112,6 +131,7 @@ export const useSheetStore = defineStore('sheet', () => {
     loading,
     initialized,
     init,
+    reload,
     addSheet,
     loadSheet,
     addScan,

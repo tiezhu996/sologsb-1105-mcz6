@@ -1,6 +1,7 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import type { NameHistory } from '../types/history'
+import { announceEdit } from '../utils/broadcast'
 import { createId, db, plain } from '../utils/db'
 import { sortByPeriod } from '../utils/scale'
 
@@ -42,6 +43,10 @@ export const useHistoryStore = defineStore('history', () => {
     await db.histories.add(plain(history))
     histories.value = [...histories.value, history]
     currentPairId.value = history.placePairId
+    const owner = await db.placePairs.get(history.placePairId)
+    if (owner) {
+      announceEdit('history', [owner.sheetId])
+    }
     return history
   }
 

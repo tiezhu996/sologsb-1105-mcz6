@@ -2,6 +2,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { usePlaceStore, type NewPlacePair } from '../stores/placeStore'
 import { useSheetStore } from '../stores/sheetStore'
+import { RETIRED_STATUS } from '../types/sheet'
 import type { Certainty, PlacePair, PlaceType } from '../types/placePair'
 import { CERTAINTIES, PLACE_TYPES } from '../types/placePair'
 import { usePlaceSearch } from '../hooks/usePlaceSearch'
@@ -15,9 +16,11 @@ const { matches } = usePlaceSearch(placeStore.keyword)
 const showCreateForm = ref(false)
 const formError = ref('')
 
+const activeSheets = computed(() => sheetStore.sheets.filter((sheet) => sheet.status !== RETIRED_STATUS))
+
 function createEmptyForm(): NewPlacePair {
   return {
-    sheetId: sheetStore.sheets[0]?.id ?? '',
+    sheetId: activeSheets.value[0]?.id ?? '',
     oldName: '',
     newName: '',
     aliasList: [],
@@ -38,7 +41,11 @@ const visiblePairs = computed(() =>
 )
 
 function getSheetCode(pair: PlacePair): string {
-  return sheetStore.getSheetById(pair.sheetId)?.code ?? '图幅待补'
+  const sheet = sheetStore.getSheetById(pair.sheetId)
+  if (!sheet) {
+    return '图幅待补'
+  }
+  return sheet.status === RETIRED_STATUS ? `${sheet.code}（已撤编）` : sheet.code
 }
 
 function resetForm(): void {
@@ -69,7 +76,7 @@ async function submitPlace(): Promise<void> {
 async function initialize(): Promise<void> {
   await Promise.all([sheetStore.init(), placeStore.init()])
   if (!form.sheetId) {
-    form.sheetId = sheetStore.sheets[0]?.id ?? ''
+    form.sheetId = activeSheets.value[0]?.id ?? ''
   }
 }
 
@@ -96,7 +103,7 @@ onMounted(() => {
       <div class="form-grid">
         <el-form-item label="所属图幅" required>
           <select v-model="form.sheetId" class="native-field" data-testid="field-sheetId">
-            <option v-for="sheet in sheetStore.sheets" :key="sheet.id" :value="sheet.id">
+            <option v-for="sheet in activeSheets" :key="sheet.id" :value="sheet.id">
               {{ sheet.code }} · {{ sheet.title }}
             </option>
           </select>
