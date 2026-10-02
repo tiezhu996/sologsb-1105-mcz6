@@ -30,11 +30,19 @@ function createEmptyForm(): NewPlacePair {
 const form = reactive<NewPlacePair>(createEmptyForm())
 const aliasInput = ref('')
 
+const visibleSheetsForSelect = computed(() =>
+  sheetStore.sheets.filter((sheet) => sheet.status !== '已撤编'),
+)
+
 const visiblePairs = computed(() =>
-  placeStore.filteredPairs.filter((pair) => matches(pair)).sort((left, right) => {
-    const sheetCompare = (sheetStore.getSheetById(left.sheetId)?.year ?? 0) - (sheetStore.getSheetById(right.sheetId)?.year ?? 0)
-    return sheetCompare || left.oldName.localeCompare(right.oldName, 'zh-CN')
-  }),
+  placeStore.filteredPairs
+    // 已撤编图幅的地名默认不出现在对照台，避免继续对撤编资料做核录。
+    .filter((pair) => sheetStore.getSheetById(pair.sheetId)?.status !== '已撤编')
+    .filter((pair) => matches(pair))
+    .sort((left, right) => {
+      const sheetCompare = (sheetStore.getSheetById(left.sheetId)?.year ?? 0) - (sheetStore.getSheetById(right.sheetId)?.year ?? 0)
+      return sheetCompare || left.oldName.localeCompare(right.oldName, 'zh-CN')
+    }),
 )
 
 function getSheetCode(pair: PlacePair): string {
@@ -68,8 +76,9 @@ async function submitPlace(): Promise<void> {
 
 async function initialize(): Promise<void> {
   await Promise.all([sheetStore.init(), placeStore.init()])
-  if (!form.sheetId) {
-    form.sheetId = sheetStore.sheets[0]?.id ?? ''
+  const selectable = visibleSheetsForSelect.value
+  if (!form.sheetId || !selectable.some((sheet) => sheet.id === form.sheetId)) {
+    form.sheetId = selectable[0]?.id ?? ''
   }
 }
 
@@ -96,7 +105,7 @@ onMounted(() => {
       <div class="form-grid">
         <el-form-item label="所属图幅" required>
           <select v-model="form.sheetId" class="native-field" data-testid="field-sheetId">
-            <option v-for="sheet in sheetStore.sheets" :key="sheet.id" :value="sheet.id">
+            <option v-for="sheet in visibleSheetsForSelect" :key="sheet.id" :value="sheet.id">
               {{ sheet.code }} · {{ sheet.title }}
             </option>
           </select>

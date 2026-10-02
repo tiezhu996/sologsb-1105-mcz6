@@ -4,6 +4,7 @@ import type { ScanItem } from '../types/scan'
 import type { Sheet } from '../types/sheet'
 import { createId, db, plain } from '../utils/db'
 import { sortByYear } from '../utils/scale'
+import { publishChange, subscribeCatalogChanges } from '../utils/crossTab'
 
 export type NewSheet = Omit<Sheet, 'id' | 'neighborCodes'> & {
   neighborCodes?: string[]
@@ -53,6 +54,7 @@ export const useSheetStore = defineStore('sheet', () => {
     await db.sheets.add(plain(sheet))
     sheets.value = sortByYear([...sheets.value, sheet]).reverse()
     currentSheet.value = sheet
+    publishChange('material-changed', sheet.id)
     return sheet
   }
 
@@ -72,6 +74,7 @@ export const useSheetStore = defineStore('sheet', () => {
     }
     await db.scans.add(plain(scan))
     allScans.value = [...allScans.value, scan]
+    publishChange('material-changed', scan.sheetId)
     return scan
   }
 
@@ -88,6 +91,21 @@ export const useSheetStore = defineStore('sheet', () => {
       }
       return { ...scan, isPrimary: scan.id === scanId }
     })
+    publishChange('material-changed', target.sheetId)
+  }
+
+  /**
+   * 跨页签重新同步：另一页签撤编、撤销撤编或改了资料后，
+   * 本页签的内存集合需要与 IndexedDB 重新对齐，避免按旧状态展示。
+   */
+  async function resync(): Promise<void> {
+    await init()
+    const [sheetRows, scanRows] = await Promise.all([db.sheets.toArray(), db.scans.toArray()])
+    sheets.value = sortByYear(sheetRows).reverse()
+    allScans.value = scanRows
+    if (currentSheet.value) {
+      currentSheet.value = sheets.value.find((sheet) => sheet.id === currentSheet.value?.id) ?? null
+    }
   }
 
   function getSheetById(id: string): Sheet | undefined {
@@ -104,6 +122,17 @@ export const useSheetStore = defineStore('sheet', () => {
       .sort((left, right) => Number(right.isPrimary) - Number(left.isPrimary))
   }
 
+  // 其他页签的任何编目变动都可能改变本页签看到的状态，做一次去抖重拉。
+  let resyncTimer: ReturnType<typeof setTimeout> | null = null
+  subscribeCatalogChanges(() => {
+    if (resyncTimer) {
+      clearTimeout(resyncTimer)
+    }
+    resyncTimer = setTimeout(() => {
+      void resync()
+    }, 120)
+  })
+
   return {
     sheets,
     allScans,
@@ -116,6 +145,7 @@ export const useSheetStore = defineStore('sheet', () => {
     loadSheet,
     addScan,
     setPrimaryScan,
+    resync,
     getSheetById,
     getSheetByCode,
     getScansForSheet,

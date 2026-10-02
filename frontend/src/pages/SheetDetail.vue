@@ -1,8 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { useSheetStore, type NewScanItem } from '../stores/sheetStore'
 import { usePlaceStore } from '../stores/placeStore'
+import { useHistoryStore } from '../stores/historyStore'
+import { useWithdrawalStore } from '../stores/withdrawalStore'
 import type { ColorMode, ScanQuality } from '../types/scan'
 import { COLOR_MODES, SCAN_QUALITIES } from '../types/scan'
 import { usePlaceSearch } from '../hooks/usePlaceSearch'
@@ -11,20 +14,31 @@ import { downloadJson } from '../utils/export'
 import PairRow from '../components/common/PairRow.vue'
 import ScanCard from '../components/common/ScanCard.vue'
 import VacantHint from '../components/common/VacantHint.vue'
+import WithdrawDialog from '../components/common/WithdrawDialog.vue'
 
 const route = useRoute()
 const sheetStore = useSheetStore()
 const placeStore = usePlaceStore()
+const historyStore = useHistoryStore()
+const withdrawalStore = useWithdrawalStore()
 const searchKeyword = ref('')
 const { hits } = usePlaceSearch(searchKeyword)
 const showScanForm = ref(false)
+const showWithdrawDialog = ref(false)
+const restoring = ref(false)
 
 const sheetId = computed(() => String(route.params.id ?? ''))
 const sheet = computed(() => {
   const current = sheetStore.currentSheet
   return current?.id === sheetId.value ? current : undefined
 })
+const isWithdrawn = computed(() => sheet.value?.status === '已撤编')
+const withdrawalRecord = computed(() => withdrawalStore.currentRecord)
 const relatedPlaces = computed(() => placeStore.getPairsForSheet(sheetId.value))
+const relatedHistories = computed(() => {
+  const pairIds = new Set(relatedPlaces.value.map((pair) => pair.id))
+  return historyStore.histories.filter((history) => pairIds.has(history.placePairId))
+})
 const relatedHits = computed(() => hits.value.filter((hit) => hit.pair.sheetId === sheetId.value))
 const spanEstimate = computed(() => (sheet.value ? estimateSheetSpan(sheet.value.scale, sheet.value.sheetSizeCm) : undefined))
 
@@ -73,12 +87,42 @@ function exportSheet(): void {
     sheet: sheet.value,
     scans: sheetStore.getScansForSheet(sheet.value.id),
     placePairs: relatedPlaces.value,
+    histories: relatedHistories.value,
+    ...(withdrawalRecord.value ? { withdrawal: withdrawalRecord.value.stage } : {}),
   })
 }
 
+async function undoWithdrawal(): Promise<void> {
+  if (!withdrawalRecord.value) {
+    return
+  }
+  try {
+    await ElMessageBox.confirm(
+      '将依据撤编时保存的快照恢复图幅原状态与各邻图邻接表，扫描件、地名与沿革记录保持现状。是否撤销该图幅的撤编？',
+      '从快照撤销撤编',
+      { confirmButtonText: '撤销撤编', cancelButtonText: '再看看', type: 'warning' },
+    )
+  } catch {
+    return
+  }
+  restoring.value = true
+  try {
+    await withdrawalStore.restoreFromSnapshot()
+    await sheetStore.resync()
+    await placeStore.resync()
+    await withdrawalStore.loadForSheet(sheetId.value)
+    ElMessage.success('已按快照撤销撤编，图幅恢复在编。')
+  } catch (error) {
+    ElMessage.error(error instanceof Error ? error.message : '撤销撤编失败，资料未被改动。')
+  } finally {
+    restoring.value = false
+  }
+}
+
 async function initialize(): Promise<void> {
-  await Promise.all([sheetStore.init(), placeStore.init()])
+  await Promise.all([sheetStore.init(), placeStore.init(), historyStore.init()])
   await sheetStore.loadSheet(sheetId.value)
+  await withdrawalStore.loadForSheet(sheetId.value)
 }
 
 onMounted(() => {
@@ -87,22 +131,36 @@ onMounted(() => {
 
 watch(sheetId, () => {
   resetScanForm()
-  void sheetStore.loadSheet(sheetId.value)
+  showScanForm.value = false
+  void (async () => {
+    await sheetStore.loadSheet(sheetId.value)
+    await withdrawalStore.loadForSheet(sheetId.value)
+  })()
 })
 </script>
 
 <template>
   <section v-if="sheet" class="page" data-testid="detail-sheet">
+    <el-alert
+      v-if="isWithdrawn"
+      class="withdrawn-banner"
+      type="error"
+      show-icon
+      :closable="false"
+      title="该图幅已撤编"
+      :description="withdrawalRecord?.reason ? `撤编缘由：${withdrawalRecord.reason}` : '该图幅已从编目台与默认导出中撤下，以下原资料仍可查阅。'"
+    />
+
     <div class="detail-layout">
       <div>
-        <header class="detail-hero">
+        <header class="detail-hero" :class="{ 'detail-hero--withdrawn': isWithdrawn }">
           <span class="detail-hero__code">{{ sheet.code }} · {{ sheet.series }}</span>
           <h1>{{ sheet.title }}</h1>
           <p>{{ sheet.projection }}，图幅尺寸 {{ sheet.sheetSizeCm }}。现登记 {{ relatedPlaces.length }} 条地名对照。</p>
           <div class="detail-hero__tags">
             <el-tag type="warning" effect="dark">{{ sheet.year }} 年</el-tag>
             <el-tag type="info" effect="dark">{{ sheet.scale }}</el-tag>
-            <el-tag effect="dark">{{ sheet.status }}</el-tag>
+            <el-tag :type="isWithdrawn ? 'danger' : 'primary'" effect="dark">{{ sheet.status }}</el-tag>
             <el-tag v-if="spanEstimate" effect="dark">
               约 {{ spanEstimate.widthKm }} × {{ spanEstimate.heightKm }} 公里
             </el-tag>
@@ -112,12 +170,14 @@ watch(sheetId, () => {
         <div class="section-title">
           <div>
             <h2>扫描件条目</h2>
-            <span class="muted">主用件优先作为地名核录与拼合基准</span>
+            <span class="muted">
+              {{ isWithdrawn ? '图幅已撤编，以下为撤编时留存的原扫描件资料，仅供查阅。' : '主用件优先作为地名核录与拼合基准' }}
+            </span>
           </div>
-          <el-button type="primary" plain @click="showScanForm = true">登记扫描件</el-button>
+          <el-button v-if="!isWithdrawn" type="primary" plain @click="showScanForm = true">登记扫描件</el-button>
         </div>
 
-        <form v-if="showScanForm" class="inline-form" @submit.prevent="submitScan">
+        <form v-if="showScanForm && !isWithdrawn" class="inline-form" @submit.prevent="submitScan">
           <h2>登记扫描件</h2>
           <div class="form-grid">
             <el-form-item label="扫描文件名" required>
@@ -157,7 +217,7 @@ watch(sheetId, () => {
           <ScanCard v-for="scan in sheetStore.currentScans" :key="scan.id" :scan="scan" />
           <div v-if="sheetStore.currentScans.length === 0" class="empty-inline">该图幅尚未登记扫描件。</div>
         </div>
-        <div v-if="sheetStore.currentScans.length" class="section-title">
+        <div v-if="!isWithdrawn && sheetStore.currentScans.length" class="section-title">
           <span class="muted">主用件标记可随时切换，原主用件会自动取消。</span>
           <div>
             <el-button
@@ -189,10 +249,35 @@ watch(sheetId, () => {
             <div><dt>扫描件</dt><dd>{{ sheetStore.currentScans.length }} 件</dd></div>
             <div><dt>地名对照</dt><dd>{{ relatedPlaces.length }} 条</dd></div>
           </dl>
-          <div class="mt-20">
+          <div class="mt-20 side-actions">
             <router-link :to="`/sheets/${sheet.id}/neighbors`"><el-button>查看邻接与拼合预览</el-button></router-link>
             <el-button type="primary" plain @click="exportSheet">导出 JSON</el-button>
+            <el-button v-if="!isWithdrawn" type="danger" plain data-testid="open-withdraw" @click="showWithdrawDialog = true">
+              办理撤编
+            </el-button>
           </div>
+        </section>
+
+        <section v-if="isWithdrawn && withdrawalRecord?.stage === 'committed'" class="side-panel snapshot-panel">
+          <h2>撤编快照</h2>
+          <dl class="fact-list">
+            <div><dt>撤编时间</dt><dd>{{ new Date(withdrawalRecord.committedAt ?? '').toLocaleString('zh-CN') }}</dd></div>
+            <div><dt>固定时间</dt><dd>{{ new Date(withdrawalRecord.snapshot.pinnedAt).toLocaleString('zh-CN') }}</dd></div>
+            <div><dt>快照扫描件</dt><dd>{{ withdrawalRecord.snapshot.scans.length }} 件</dd></div>
+            <div><dt>快照地名</dt><dd>{{ withdrawalRecord.snapshot.placePairs.length }} 条</dd></div>
+            <div><dt>快照沿革</dt><dd>{{ withdrawalRecord.snapshot.histories.length }} 条</dd></div>
+            <div><dt>受影响邻图</dt><dd>{{ withdrawalRecord.snapshot.affectedNeighbors.length }} 幅</dd></div>
+          </dl>
+          <p v-if="withdrawalRecord.reason" class="snapshot-panel__reason">缘由：{{ withdrawalRecord.reason }}</p>
+          <el-button
+            type="warning"
+            class="snapshot-panel__restore"
+            :loading="restoring"
+            data-testid="undo-withdraw"
+            @click="undoWithdrawal"
+          >
+            从快照撤销撤编
+          </el-button>
         </section>
       </aside>
     </div>
@@ -200,7 +285,9 @@ watch(sheetId, () => {
     <section class="section-title">
       <div>
         <h2>图内地名核录</h2>
-        <span class="muted">可检索本图幅的古名、今名、异写与图上方位。</span>
+        <span class="muted">
+          {{ isWithdrawn ? '撤编图幅的地名对照原资料，按快照保留可查。' : '可检索本图幅的古名、今名、异写与图上方位。' }}
+        </span>
       </div>
       <el-input v-model="searchKeyword" clearable placeholder="检索本地名" style="width: 260px" />
     </section>
@@ -215,6 +302,13 @@ watch(sheetId, () => {
       />
       <div v-if="searchKeyword && relatedHits.length === 0" class="empty-inline">本地名未检索到吻合记录。</div>
     </div>
+
+    <WithdrawDialog
+      v-model="showWithdrawDialog"
+      :sheet="sheet"
+      @committed="initialize()"
+      @restored="initialize()"
+    />
   </section>
 
   <section v-else class="page">
@@ -222,3 +316,38 @@ watch(sheetId, () => {
     <VacantHint title="未找到该图幅" description="图幅可能已被移除，请返回编目台重新选择。" />
   </section>
 </template>
+
+<style scoped>
+.withdrawn-banner {
+  margin-bottom: 18px;
+}
+
+.detail-hero--withdrawn {
+  background:
+    linear-gradient(120deg, rgba(94, 84, 78, 0.95), rgba(58, 52, 48, 0.97)),
+    #4a423c;
+}
+
+.side-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.snapshot-panel {
+  margin-top: 16px;
+  border-color: #cfa98e;
+}
+
+.snapshot-panel__reason {
+  margin: 12px 0 0;
+  color: #6c594a;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.snapshot-panel__restore {
+  width: 100%;
+  margin-top: 14px;
+}
+</style>

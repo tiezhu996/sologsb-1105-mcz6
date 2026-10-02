@@ -1,19 +1,29 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
+import { ElMessage } from 'element-plus'
 import { useSheetStore, type NewSheet } from '../stores/sheetStore'
+import { usePlaceStore } from '../stores/placeStore'
+import { useHistoryStore } from '../stores/historyStore'
+import { useWithdrawalStore } from '../stores/withdrawalStore'
 import type { Sheet, SheetScale, SheetStatus } from '../types/sheet'
 import { SHEET_SCALES, SHEET_STATUSES } from '../types/sheet'
 import { useSheetNeighbors } from '../hooks/useSheetNeighbors'
 import { scaleToText } from '../utils/scale'
+import { buildCatalogExport, downloadJson } from '../utils/export'
 import ScaleTag from '../components/common/ScaleTag.vue'
 import VacantHint from '../components/common/VacantHint.vue'
 
 const sheetStore = useSheetStore()
+const placeStore = usePlaceStore()
+const historyStore = useHistoryStore()
+const withdrawalStore = useWithdrawalStore()
 const { getNeighborStatus } = useSheetNeighbors('')
 
 const yearFilter = ref('全部')
 const scaleFilter = ref<SheetScale | '全部'>('全部')
 const statusFilter = ref<SheetStatus | '全部'>('全部')
+const showWithdrawn = ref(false)
+const includeWithdrawnInExport = ref(false)
 const showCreateForm = ref(false)
 const formError = ref('')
 
@@ -35,14 +45,41 @@ const form = reactive<NewSheet>(createEmptyForm())
 
 const years = computed(() => [...new Set(sheetStore.sheets.map((sheet) => sheet.year))].sort((a, b) => b - a))
 
+const withdrawnCount = computed(
+  () => sheetStore.sheets.filter((sheet) => sheet.status === '已撤编').length,
+)
+
 const filteredSheets = computed(() =>
   sheetStore.sheets.filter((sheet) => {
+    // 编目台默认不显示已撤编图幅；显式勾选后才纳入筛选结果。
+    if (sheet.status === '已撤编' && !showWithdrawn.value) {
+      return false
+    }
     const matchesYear = yearFilter.value === '全部' || String(sheet.year) === yearFilter.value
     const matchesScale = scaleFilter.value === '全部' || sheet.scale === scaleFilter.value
     const matchesStatus = statusFilter.value === '全部' || sheet.status === statusFilter.value
     return matchesYear && matchesScale && matchesStatus
   }),
 )
+
+async function exportCatalog(): Promise<void> {
+  await Promise.all([placeStore.init(), historyStore.init()])
+  const withdrawals = includeWithdrawnInExport.value ? await withdrawalStore.listAll() : []
+  downloadJson(
+    '图幅编目台-导出.json',
+    buildCatalogExport(
+      {
+        sheets: sheetStore.sheets,
+        scans: sheetStore.allScans,
+        placePairs: placeStore.pairs,
+        histories: historyStore.histories,
+        withdrawals,
+      },
+      includeWithdrawnInExport.value,
+    ),
+  )
+  ElMessage.success(includeWithdrawnInExport.value ? '已导出全量编目（含撤编快照）。' : '已导出现存编目，已撤编图幅默认不含。')
+}
 
 function neighborSummary(sheet: Sheet): string {
   const status = getNeighborStatus(sheet.id)
@@ -84,7 +121,9 @@ async function submitSheet(): Promise<void> {
 }
 
 onMounted(() => {
-  void sheetStore.init()
+  void (async () => {
+    await Promise.all([sheetStore.init(), placeStore.init(), historyStore.init()])
+  })()
 })
 </script>
 
@@ -113,6 +152,17 @@ onMounted(() => {
       <div class="metric">
         <span>已编图幅</span>
         <strong>{{ sheetStore.sheets.filter((sheet) => sheet.status === '已编').length }}</strong><small>幅</small>
+      </div>
+    </div>
+
+    <div class="catalog-toolbar">
+      <label class="withdrawn-toggle">
+        <el-checkbox v-model="showWithdrawn" data-testid="toggle-withdrawn" />
+        <span>显示已撤编图幅（{{ withdrawnCount }} 幅，默认隐藏）</span>
+      </label>
+      <div class="catalog-toolbar__export">
+        <el-checkbox v-model="includeWithdrawnInExport">导出时包含已撤编及快照</el-checkbox>
+        <el-button type="primary" plain data-testid="export-catalog" @click="exportCatalog">导出编目 JSON</el-button>
       </div>
     </div>
 
@@ -176,18 +226,28 @@ onMounted(() => {
       <el-select v-model="statusFilter" style="width: 130px" aria-label="按整理状态筛选">
         <el-option label="全部状态" value="全部" />
         <el-option v-for="status in SHEET_STATUSES" :key="status" :label="status" :value="status" />
+        <el-option v-if="showWithdrawn" label="已撤编" value="已撤编" />
       </el-select>
       <span class="filter-count">当前记录数：<strong data-testid="count-sheet">{{ filteredSheets.length }}</strong></span>
     </div>
 
     <div v-if="filteredSheets.length" class="card-grid">
-      <article v-for="sheet in filteredSheets" :key="sheet.id" class="sheet-card" data-testid="row-sheet">
+      <article
+        v-for="sheet in filteredSheets"
+        :key="sheet.id"
+        class="sheet-card"
+        :class="{ 'sheet-card--withdrawn': sheet.status === '已撤编' }"
+        data-testid="row-sheet"
+      >
         <div class="sheet-card__top">
           <div>
             <div class="sheet-card__code">{{ sheet.code }}</div>
             <div class="sheet-card__series">{{ sheet.series }}</div>
           </div>
-          <el-tag :type="sheet.status === '已编' ? 'success' : sheet.status === '待核' ? 'warning' : 'info'" effect="dark">
+          <el-tag
+            :type="sheet.status === '已编' ? 'success' : sheet.status === '待核' ? 'warning' : sheet.status === '已撤编' ? 'danger' : 'info'"
+            effect="dark"
+          >
             {{ sheet.status }}
           </el-tag>
         </div>
@@ -219,9 +279,50 @@ onMounted(() => {
     <VacantHint
       v-else
       title="没有符合条件的图幅"
-      description="调整年代、比例尺或整理状态，或者新建一张图幅卡继续编目。"
+      :description="showWithdrawn ? '调整年代、比例尺或整理状态，或者新建一张图幅卡继续编目。' : '默认不显示已撤编图幅；如需查阅撤编资料，请勾选上方“显示已撤编图幅”。'"
       action-text="新建图幅"
       @action="showCreateForm = true"
     />
   </section>
 </template>
+
+<style scoped>
+.catalog-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  background: rgba(244, 237, 225, 0.92);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.withdrawn-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.catalog-toolbar__export {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.sheet-card--withdrawn {
+  opacity: 0.72;
+  background:
+    linear-gradient(135deg, rgba(110, 96, 84, 0.1), transparent 46%),
+    #f1ece3;
+}
+
+.sheet-card--withdrawn::after {
+  border-color: rgba(120, 60, 50, 0.22);
+}
+</style>

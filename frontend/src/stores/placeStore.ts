@@ -2,6 +2,7 @@ import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import type { Certainty, PlacePair, PlaceType } from '../types/placePair'
 import { createId, db, plain } from '../utils/db'
+import { publishChange, subscribeCatalogChanges } from '../utils/crossTab'
 
 export type NewPlacePair = Omit<PlacePair, 'id'>
 
@@ -43,6 +44,7 @@ export const usePlaceStore = defineStore('place', () => {
     await db.placePairs.add(plain(pair))
     pairs.value = [...pairs.value, pair]
     currentPair.value = pair
+    publishChange('material-changed', pair.sheetId)
     return pair
   }
 
@@ -66,6 +68,25 @@ export const usePlaceStore = defineStore('place', () => {
     matchedPairIds.value = []
   }
 
+  /** 跨页签撤编或资料变动后与 IndexedDB 重新对齐。 */
+  async function resync(): Promise<void> {
+    await init()
+    pairs.value = await db.placePairs.toArray()
+    if (currentPair.value) {
+      currentPair.value = pairs.value.find((pair) => pair.id === currentPair.value?.id) ?? null
+    }
+  }
+
+  let resyncTimer: ReturnType<typeof setTimeout> | null = null
+  subscribeCatalogChanges((message) => {
+    if (resyncTimer) {
+      clearTimeout(resyncTimer)
+    }
+    resyncTimer = setTimeout(() => {
+      void resync()
+    }, 120)
+  })
+
   return {
     pairs,
     currentPair,
@@ -78,6 +99,7 @@ export const usePlaceStore = defineStore('place', () => {
     init,
     addPair,
     loadPair,
+    resync,
     getPairsForSheet,
     setMatchedPairIds,
     resetFilters,

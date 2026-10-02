@@ -9,6 +9,8 @@ export interface NeighborEntry {
   code: string
   direction: NeighborDirection
   sheet?: Sheet
+  /** 邻图已撤编：拼合核接边时需特别提示。 */
+  withdrawn: boolean
 }
 
 export interface NeighborStatus {
@@ -28,6 +30,7 @@ export function useSheetNeighbors(sheetId: MaybeRefOrGetter<string>) {
       return {
         code,
         direction: NEIGHBOR_DIRECTIONS[index] ?? NEIGHBOR_DIRECTIONS[0],
+        withdrawn: sheet?.status === '已撤编',
         ...(sheet ? { sheet } : {}),
       }
     })

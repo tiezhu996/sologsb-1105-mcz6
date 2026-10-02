@@ -3,6 +3,7 @@ import type { NameHistory } from '../types/history'
 import type { PlacePair } from '../types/placePair'
 import type { ScanItem } from '../types/scan'
 import type { Sheet } from '../types/sheet'
+import type { WithdrawalRecord } from '../types/withdrawal'
 
 const sheets: Sheet[] = [
   {
@@ -381,6 +382,7 @@ class GboldmapDatabase extends Dexie {
   scans!: Table<ScanItem, string>
   placePairs!: Table<PlacePair, string>
   histories!: Table<NameHistory, string>
+  withdrawals!: Table<WithdrawalRecord, string>
 
   constructor() {
     super('gboldmap-db')
@@ -407,6 +409,16 @@ class GboldmapDatabase extends Dexie {
             sheet.schemaRev = 2
           })
       })
+
+    // 撤编流程：单独仓库存放检查点/快照，索引到图幅与阶段，
+    // 保证写入中断后仍能找到检查点并恢复，不留半套撤编结果。
+    this.version(3).stores({
+      sheets: 'id, code, year, scale, status, series',
+      scans: 'id, sheetId, importedAt, quality',
+      placePairs: 'id, sheetId, oldName, newName, placeType, certainty',
+      histories: 'id, placePairId, period, changeType',
+      withdrawals: 'id, sheetId, sheetCode, stage, updatedAt',
+    })
 
     this.on('populate', async () => {
       await this.sheets.bulkAdd(sheets)

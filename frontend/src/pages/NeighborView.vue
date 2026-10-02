@@ -64,9 +64,13 @@ onMounted(() => {
         <span class="neighbor-slot__direction">北 · NORTH</span>
         <template v-if="entryAt('北')">
           <template v-if="entryAt('北')?.sheet">
-            <h3>{{ entryAt('北')?.sheet?.code }}</h3>
+            <h3>
+              {{ entryAt('北')?.sheet?.code }}
+              <el-tag v-if="entryAt('北')?.withdrawn" type="danger" size="small" effect="dark">已撤编</el-tag>
+            </h3>
             <p>{{ entryAt('北')?.sheet?.title }}</p>
-            <router-link :to="`/sheets/${entryAt('北')?.sheet?.id}`"><el-button link type="primary">查看图幅</el-button></router-link>
+            <router-link v-if="!entryAt('北')?.withdrawn" :to="`/sheets/${entryAt('北')?.sheet?.id}`"><el-button link type="primary">查看图幅</el-button></router-link>
+            <router-link v-else :to="`/sheets/${entryAt('北')?.sheet?.id}`"><el-button link type="warning">查看撤编资料</el-button></router-link>
           </template>
           <template v-else>
             <h3 class="text-danger">{{ entryAt('北')?.code }}</h3>
@@ -80,9 +84,13 @@ onMounted(() => {
         <span class="neighbor-slot__direction">西 · WEST</span>
         <template v-if="entryAt('西')">
           <template v-if="entryAt('西')?.sheet">
-            <h3>{{ entryAt('西')?.sheet?.code }}</h3>
+            <h3>
+              {{ entryAt('西')?.sheet?.code }}
+              <el-tag v-if="entryAt('西')?.withdrawn" type="danger" size="small" effect="dark">已撤编</el-tag>
+            </h3>
             <p>{{ entryAt('西')?.sheet?.title }}</p>
-            <router-link :to="`/sheets/${entryAt('西')?.sheet?.id}`"><el-button link type="primary">查看图幅</el-button></router-link>
+            <router-link v-if="!entryAt('西')?.withdrawn" :to="`/sheets/${entryAt('西')?.sheet?.id}`"><el-button link type="primary">查看图幅</el-button></router-link>
+            <router-link v-else :to="`/sheets/${entryAt('西')?.sheet?.id}`"><el-button link type="warning">查看撤编资料</el-button></router-link>
           </template>
           <template v-else>
             <h3 class="text-danger">{{ entryAt('西')?.code }}</h3>
@@ -94,7 +102,10 @@ onMounted(() => {
 
       <article class="neighbor-slot neighbor-slot--center slot-center">
         <span class="neighbor-slot__direction">当前图幅 · CENTER</span>
-        <h3>{{ source.code }}</h3>
+        <h3>
+          {{ source.code }}
+          <el-tag v-if="source.status === '已撤编'" type="danger" size="small" effect="dark">已撤编</el-tag>
+        </h3>
         <p>{{ source.title }}</p>
         <ScaleTag :year="source.year" :scale="source.scale" />
         <div v-if="sourcePrimaryScan" class="mt-20">
@@ -107,9 +118,13 @@ onMounted(() => {
         <span class="neighbor-slot__direction">东 · EAST</span>
         <template v-if="entryAt('东')">
           <template v-if="entryAt('东')?.sheet">
-            <h3>{{ entryAt('东')?.sheet?.code }}</h3>
+            <h3>
+              {{ entryAt('东')?.sheet?.code }}
+              <el-tag v-if="entryAt('东')?.withdrawn" type="danger" size="small" effect="dark">已撤编</el-tag>
+            </h3>
             <p>{{ entryAt('东')?.sheet?.title }}</p>
-            <router-link :to="`/sheets/${entryAt('东')?.sheet?.id}`"><el-button link type="primary">查看图幅</el-button></router-link>
+            <router-link v-if="!entryAt('东')?.withdrawn" :to="`/sheets/${entryAt('东')?.sheet?.id}`"><el-button link type="primary">查看图幅</el-button></router-link>
+            <router-link v-else :to="`/sheets/${entryAt('东')?.sheet?.id}`"><el-button link type="warning">查看撤编资料</el-button></router-link>
           </template>
           <template v-else>
             <h3 class="text-danger">{{ entryAt('东')?.code }}</h3>
@@ -123,9 +138,13 @@ onMounted(() => {
         <span class="neighbor-slot__direction">南 · SOUTH</span>
         <template v-if="entryAt('南')">
           <template v-if="entryAt('南')?.sheet">
-            <h3>{{ entryAt('南')?.sheet?.code }}</h3>
+            <h3>
+              {{ entryAt('南')?.sheet?.code }}
+              <el-tag v-if="entryAt('南')?.withdrawn" type="danger" size="small" effect="dark">已撤编</el-tag>
+            </h3>
             <p>{{ entryAt('南')?.sheet?.title }}</p>
-            <router-link :to="`/sheets/${entryAt('南')?.sheet?.id}`"><el-button link type="primary">查看图幅</el-button></router-link>
+            <router-link v-if="!entryAt('南')?.withdrawn" :to="`/sheets/${entryAt('南')?.sheet?.id}`"><el-button link type="primary">查看图幅</el-button></router-link>
+            <router-link v-else :to="`/sheets/${entryAt('南')?.sheet?.id}`"><el-button link type="warning">查看撤编资料</el-button></router-link>
           </template>
           <template v-else>
             <h3 class="text-danger">{{ entryAt('南')?.code }}</h3>
